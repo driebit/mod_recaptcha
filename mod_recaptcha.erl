@@ -16,6 +16,8 @@
 
 -export([check_recaptcha/1]).
 
+-export([check_recaptcha_v2/1]).
+
 -include_lib("zotonic.hrl").
 
 %% @doc Recaptcha check on a signup
@@ -83,11 +85,60 @@ check_recaptcha(Context) ->
         {error, _} = Error ->
             Error
     end.
-                        
+
+check_recaptcha_v2(Context) ->
+
+    RemoteIP    = get_remote_ip(Context),
+    Response   = z_context:get_q("g-recaptcha-response", Context),
+
+
+    % Explanation:
+    %   * http://erlangexamples.com/2009/02/24/how-to-make-http-post/
+    %   * http://code.google.com/p/recaptcha-erlang/
+    inets:start(),
+    Data = string:join(
+        [
+            string:join(["secret",       mochiweb_util:quote_plus(m_recaptcha:private_key(Context))], "="),
+            string:join(["remoteip",     mochiweb_util:quote_plus(RemoteIP)], "="),
+            string:join(["response",     mochiweb_util:quote_plus(Response)], "=")
+        ], "&"),
+
+    HttpResponse =
+        httpc:request(
+            post,
+            {
+                get_recaptcha_v2_verify_url(),
+                [],
+                "application/x-www-form-urlencoded",
+                Data
+            },
+            [], []),
+
+    case HttpResponse of
+        {ok, Result} ->
+            [FirstLine|NextLines] = case Result of
+                                        {_Status, _Headers, Body} -> string:tokens(Body, "\r\n");
+                                        {_Status, Body}           -> string:tokens(Body, "\r\n")
+                                    end,
+            case FirstLine of
+                "true" ->
+                    ok;
+                _ ->
+                    {error, lists:flatten(NextLines)}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+
 %% Support function
 
 get_recaptcha_verify_url() ->
     "http://www.google.com/recaptcha/api/verify".
+
+get_recaptcha_v2_verify_url() ->
+    "https://www.google.com/recaptcha/api/siteverify".
+
 
 get_remote_ip(Context) ->
     % This instruction is wrapped in a try-catch statement because it relies on
